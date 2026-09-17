@@ -263,7 +263,7 @@ python3 scripts/deploy.py deploy     # 仅部署
 
 这样单独备份 / 同步 `data/` 目录只能得到密文。`deploy.py up` 会自动创建目录并在首次生成主密钥；重建容器不会重新生成，因此已存密钥可持续解密（已验证）。
 
-> ⚠️ **路径翻译不是可选项**：容器创建走 docker.sock，Docker 在**宿主**文件系统解析 bind 源路径。若把只在网关容器内有效的路径（如 `/home/node/.openclaw/...`）直接传进去，Docker 会在宿主上**静默创建空目录**，密钥库看上去正常，直到第一次重建后变空。`deploy.py` 的 `host_path_for()` 通过本容器挂载表做映射，找不到映射时会**明确警告**而不是假装成功。
+> ⚠️ **路径翻译不是可选项**：容器创建走 docker.sock，Docker 在**宿主**文件系统解析 bind 源路径。若把只在网关容器内有效的路径（如某个挂载点下的子目录）直接传进去，Docker 会在宿主上**静默创建空目录**，密钥库看上去正常，直到第一次重建后变空。`deploy.py` 的 `host_path_for()` 通过本容器挂载表做映射，找不到映射时会**明确警告**而不是假装成功。
 
 **安全边界（请诚实对待，不要高估）**：
 
@@ -331,9 +331,11 @@ node --test test/*.test.js     # 或 npm test
 ### 前端浏览器测试（必需，不可省略）
 
 ```bash
-PY=/home/node/workspace/.venvs/web/bin/python
-$PY scripts/check_ui.py   http://192.0.2.10:8891   # 渲染 + JS 异常
-$PY scripts/check_flow.py http://192.0.2.10:8891   # 交互流程 30 项
+# 需要 playwright。用你项目的 Python 环境即可：
+pip install playwright && playwright install chromium
+
+python3 scripts/check_ui.py   http://127.0.0.1:8891   # 渲染 + JS 异常
+python3 scripts/check_flow.py http://127.0.0.1:8891   # 交互流程 30 项
 ```
 
 **为什么必须跑**：曾经只靠 curl 打 API 验证，结果一个前端变量遮蔽 bug（`setGwStatus` 内 `const el = …` 遮蔽了全局 `el()` 辅助函数）导致页面渲染空白、列表永远为空，而**所有 API 层检查全部通过**。前端代码只能放在真浏览器里验。
@@ -342,10 +344,10 @@ $PY scripts/check_flow.py http://192.0.2.10:8891   # 交互流程 30 项
 
 > 密钥库那组用例在服务未配置 `PM_VAULT_KEY` 时会明确报失败，而不是静默跳过——以免「测试全绿」掩盖一个未启用的特性。
 
-> 跨容器测试：manager 在另一容器时，mock 上游必须绑定到**对方可访问的 IP**（本容器在 `openclaw-net` 的地址），不能用 `127.0.0.1`：
+> 跨容器测试：manager 在另一容器时，mock 上游必须绑定到**对方可访问的 IP**（manager 在 `openclaw-net` 的地址），不能用 `127.0.0.1`：
 > ```bash
-> $PY scripts/check_flow.py http://172.20.0.10:8891 172.20.0.11 172.20.0.11
-> #                              ^manager            ^mock 绑定       ^mock 对外通告
+> python3 scripts/check_flow.py http://172.20.0.10:8891 172.20.0.11 172.20.0.11
+> #                                  ^manager          ^mock 绑定      ^mock 对外通告
 > ```
 
 ---

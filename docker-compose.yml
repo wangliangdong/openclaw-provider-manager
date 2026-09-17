@@ -1,0 +1,103 @@
+# openclaw-provider-manager — Docker Compose
+#
+# Two ways to use this file:
+#
+#   A. Prebuilt image (default) — pull from GitHub Container Registry.
+#   B. Build from source — comment out `image:` and uncomment `build:`.
+#
+# Both need a master key in .env before the first run. See .env.example.
+#
+#   cp .env.example .env
+#   # then put a freshly generated key in .env:
+#   #   PM_VAULT_KEY=$(head -c 32 /dev/urandom | base64)
+#   docker compose up -d
+#
+services:
+  provider-manager:
+    image: ghcr.io/wangliangdong/openclaw-provider-manager:latest
+
+    # --- Option B: build locally instead of pulling ---
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+
+    container_name: openclaw-provider-manager
+    restart: unless-stopped
+
+    # Deliberately NOT mounted: /var/run/docker.sock and openclaw.json.
+    #   * no docker.sock  -> the container cannot control the host engine
+    #   * no openclaw.json -> it cannot read other providers' plaintext keys
+    # The app talks to the Gateway over its admin HTTP RPC endpoint only.
+    volumes:
+      # Encrypted vault (ciphertext only). The master key arrives via env,
+      # never as a file inside this directory — so backing up ./data alone
+      # yields nothing usable.
+      - ./data:/data
+
+    environment:
+      # --- Gateway connection -------------------------------------------------
+      # Name or address of the Gateway container as seen from this container.
+      # If OpenClaw runs in its own compose project, join its network below
+      # (see `networks`) and use the Gateway's service/container name here.
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://openclaw-gateway:18789}
+
+      # Shared Gateway token. Required for any write (config.patch).
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN in .env}
+
+      # --- Optional UI login --------------------------------------------------
+      # Set to require a password before the UI will accept writes.
+      PM_ADMIN_TOKEN: ${PM_ADMIN_TOKEN:-}
+
+      # --- Encrypted vault ----------------------------------------------------
+      # base64 of exactly 32 random bytes. Generate with:
+      #   head -c 32 /dev/urandom | base64
+      # Losing this key does NOT break OpenClaw; it only means vault-stored
+      # provider keys must be re-imported (scripts/import_keys.py).
+      PM_VAULT_KEY: ${PM_VAULT_KEY:-}
+      PM_VAULT_DIR: /data
+
+      PM_PORT: "8891"
+      PM_BIND: 0.0.0.0
+
+    ports:
+      # Bind to loopback by default. Publish on a LAN address only if you
+      # understand that anyone reaching it can manage your providers.
+      - "${PM_HOST_BIND:-127.0.0.1}:${PM_HOST_PORT:-8891}:8891"
+
+    networks:
+      - openclaw
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8891/api/session').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # The network shared with the OpenClaw Gateway.
+  #
+  # If OpenClaw was started by its own compose file, its network already
+  # exists; reuse it as external (recommended):
+  openclaw:
+    external: true
+    name: ${OPENCLAW_NETWORK:-openclaw-net}
+
+  # Otherwise, drop `external`/`name` and let Compose create the network,
+  # then attach the Gateway container to it as well:
+  #
+  # openclaw:
+  #   driver: bridge

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenClaw Provider Manager</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">OpenClaw <span>Provider Manager</span></div>
+  <div class="status" id="gwStatus"><span class="dot dot-unknown"></span><span id="gwStatusText">连接中…</span></div>
+</header>
+
+<main>
+  <div class="toolbar">
+    <button class="btn primary" id="btnAdd">+ 添加 Provider</button>
+    <button class="btn" id="btnReload">重新读取</button>
+    <span class="hint" id="configPath"></span>
+  </div>
+
+  <div id="alert" class="alert hidden"></div>
+
+  <section id="providerList" class="grid" aria-live="polite"></section>
+  <p id="empty" class="empty hidden">还没有配置任何 Provider。</p>
+</main>
+
+<!-- Login (only shown when PM_ADMIN_TOKEN is configured) -->
+<div class="modal hidden" id="loginModal">
+  <div class="modal-card" style="max-width:400px">
+    <div class="modal-head"><h2>需要管理令牌</h2></div>
+    <div class="modal-body">
+      <label class="field">
+        <span>PM_ADMIN_TOKEN</span>
+        <input id="fLoginToken" type="password" placeholder="管理令牌" autocomplete="off">
+      </label>
+      <p class="hint">该容器配置了 PM_ADMIN_TOKEN，写入操作需要验证。</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn primary" id="btnLogin">登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add / edit dialog -->
+<div class="modal hidden" id="modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="modalTitle">添加 Provider</h2>
+      <button class="icon-btn" id="btnCloseModal" aria-label="关闭">×</button>
+    </div>
+
+    <div class="modal-body">
+      <label class="field">
+        <span>Provider ID <em>必填，小写字母开头</em></span>
+        <input id="fId" placeholder="example" autocomplete="off" spellcheck="false">
+      </label>
+
+      <label class="field">
+        <span>Base URL <em>OpenAI 兼容端点，通常以 /v1 结尾</em></span>
+        <input id="fBaseUrl" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false">
+      </label>
+
+      <label class="field">
+        <span>API Key <em id="keyHint"></em></span>
+        <input id="fApiKey" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
+      </label>
+
+      <!-- Optional encrypted key store (lib/keystore.js). Opt-in per provider. -->
+      <div class="vault-block" id="vaultBlock">
+        <div class="vault-head">
+          <strong>本工具密钥库</strong>
+          <span class="hint" id="vaultStatus"></span>
+        </div>
+        <label class="vault-opt">
+          <input type="checkbox" id="fRememberKey">
+          <span>加密保存此密钥，使「刷新模型」无需重复输入</span>
+        </label>
+        <p class="hint" id="vaultHint"></p>
+        <button class="link-btn hidden" id="btnForgetKey" type="button">从密钥库移除</button>
+      </div>
+
+      <label class="field">
+        <span>API 类型</span>
+        <select id="fApi">
+          <option value="openai-completions">openai-completions</option>
+          <option value="ollama">ollama</option>
+        </select>
+      </label>
+
+      <div class="discover-row">
+        <button class="btn" id="btnDiscover">获取模型</button>
+        <span class="hint" id="discoverHint"></span>
+      </div>
+
+      <div class="models-block">
+        <div class="models-head">
+          <strong>模型</strong>
+          <span class="hint" id="modelsCount"></span>
+          <div class="models-actions">
+            <button class="link-btn" id="btnSelectAll" type="button">全选</button>
+            <button class="link-btn" id="btnSelectNone" type="button">全不选</button>
+            <button class="link-btn" id="btnSelectText" type="button">仅文本</button>
+          </div>
+        </div>
+        <div id="modelsList" class="models-list">
+          <p class="hint">点击「获取模型」以发现上游可用模型。</p>
+        </div>
+        <div class="manual-add">
+          <input id="fManualModel" placeholder="手动添加模型 ID" autocomplete="off" spellcheck="false">
+          <button class="btn small" id="btnManualAdd" type="button">添加</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn" id="btnCancel">取消</button>
+      <button class="btn primary" id="btnSave">保存到 OpenClaw</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-provider-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web UI to manage OpenClaw custom model providers via Gateway RPC",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}

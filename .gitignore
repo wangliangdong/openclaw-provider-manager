@@ -1,0 +1,30 @@
+# Secrets and runtime state — never publish these.
+.env
+.env.*
+!.env.example
+
+# Encrypted vault: ciphertext plus the master key must never be committed.
+# The key is the whole security boundary; committing it defeats the vault.
+data/
+vault.key
+*.enc
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Python tooling (scripts/ are stdlib-only, but caches appear on any run)
+__pycache__/
+*.py[cod]
+.venv/
+.venvs/
+
+# Test artefacts
+/tmp-*
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -3,6 +3,10 @@
 Exercises the INTERACTIVE paths that curl-based API tests cannot reach:
 list -> add modal -> discover (error + success) -> manual add -> save
 -> edit -> test connection (redacted key / supplied key) -> delete.
+Also covers the actionable repair path: a redacted key makes "refresh models"
+return 401, which must be explained (not echoed) and paired with a one-click
+way to enroll the key in the vault — rendered INSIDE the dialog, because the
+dialog overlay covers the page-level alert entirely.
 
 WHY THIS EXISTS (two reasons, both learned the hard way):
 1. A TypeError in the frontend (variable shadowing in setGwStatus) made the page
@@ -81,18 +85,30 @@ def check(name, cond, info=""):
 
 
 def wait_alert(page, timeout=25):
-    """Return (text, class) as soon as a non-empty alert appears.
+    """Return (text, class) as soon as a non-empty message appears.
 
-    'ok' alerts auto-hide after 4s, so polling beats a fixed sleep.
+    Checks ALL containers. Messages raised while a dialog is open go to
+    #modalNotice / #loginNotice, because those fixed overlays cover the
+    page-level #alert completely. 'ok' alerts auto-hide after 4s, so polling
+    beats a fixed sleep.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not page.locator("#alert").is_hidden():
-            txt = page.inner_text("#alert").strip()
-            if txt:
-                return txt, (page.get_attribute("#alert", "class") or "")
+        for sel in ("#modalNotice", "#loginNotice", "#alert"):
+            loc = page.locator(sel)
+            if not loc.is_hidden():
+                txt = loc.inner_text().strip()
+                if txt:
+                    return txt, (page.get_attribute(sel, "class") or "")
         page.wait_for_timeout(150)
     return "", ""
+
+
+def vault_ids(page):
+    """Provider ids currently in the server-side vault."""
+    return page.evaluate(
+        "async () => ((await (await fetch('/api/vault')).json()).entries || []).map(e => e.id)"
+    )
 
 
 with sync_playwright() as p:
@@ -133,6 +149,11 @@ with sync_playwright() as p:
     page.wait_for_timeout(2500)
     t, _ = wait_alert(page, 8)
     check("discover failure shown", "获取模型失败" in t, f"{t[:50]!r}")
+    check("add-mode failure is visible inside the dialog",
+          not page.locator("#modalNotice").is_hidden(),
+          "the page-level #alert is covered by the overlay")
+    check("add-mode failure offers no vault fix (nothing stored yet)",
+          page.locator("#modalNotice button").count() == 0)
 
     # --- discover SUCCESS path (mock requires the token) --------------------
     page.fill("#fBaseUrl", MOCK_URL)
@@ -208,6 +229,28 @@ with sync_playwright() as p:
     else:
         check("vault: available", True)
 
+        # --- actionable repair: a redacted key makes refresh 401, offer the fix
+        # The upstream's "invalid key" text describes a request that carried NO
+        # key at all, so it must not be echoed as if the key were rejected. The
+        # UI has to explain that and hand the user the one-click fix.
+        page.locator("#providerList .card", has_text=PROVIDER).locator(
+            "button", has_text="刷新模型").click()
+        page.wait_for_timeout(2500)
+        t, cls = wait_alert(page, 15)
+        check("redacted refresh: explains the key is redacted, not rejected",
+              "脱敏" in t and "并非密钥本身失效" in t, f"{t[:90]!r}")
+        check("redacted refresh: warning tone", "warn" in cls, f"class={cls!r}")
+        fix = page.locator("#modalNotice button", has_text="加密保存此密钥")
+        check("redacted refresh: offers a one-click fix", fix.count() == 1)
+        if fix.count():
+            fix.click()
+            page.wait_for_timeout(400)
+            check("fix button ticks the vault opt-in", page.is_checked("#fRememberKey"))
+            check("fix button focuses the key field",
+                  page.evaluate("() => document.activeElement && document.activeElement.id") == "fApiKey")
+        page.click("#btnCancel")
+        page.wait_for_timeout(300)
+
         # Opt in while editing: tick the box and save with the key.
         page.locator("#providerList .card", has_text=PROVIDER).locator("button", has_text="编辑").click()
         page.wait_for_timeout(700)
@@ -243,14 +286,30 @@ with sync_playwright() as p:
         page.click("#btnForgetKey")
         page.wait_for_timeout(1200)
         check("vault: forget button hidden after removal", page.locator("#btnForgetKey").is_hidden())
-        page.click("#btnCancel")
-        page.wait_for_timeout(300)
+
+        # Re-enroll, so the delete below actually exercises vault cleanup.
+        # Otherwise the entry is already gone and the delete proves nothing.
+        page.fill("#fApiKey", TOKEN)
+        page.check("#fRememberKey")
+        page.click("#btnSave")
+        page.wait_for_timeout(2200)
+        t, _ = wait_alert(page, 12)
+        check("vault: re-enrolled before delete", "密钥已加密存入密钥库" in t, f"{t[:70]!r}")
+        check("vault: entry present before delete", PROVIDER in vault_ids(page), f"{vault_ids(page)}")
 
     # --- delete -------------------------------------------------------------
+    # Deleting a provider must also drop its vault copy: once it is gone from
+    # config, discovery can never use that entry again, so a survivor is dead
+    # weight that piles up unnoticed (exactly how a stale key lingered here).
     page.locator("#providerList .card", has_text=PROVIDER).locator("button", has_text="删除").click()
-    page.wait_for_timeout(2000)
-    heads = page.locator("#providerList .card h3").all_inner_texts()
-    check("provider deleted", PROVIDER not in heads, f"{heads}")
+    page.wait_for_timeout(2200)
+    t, cls = wait_alert(page, 12)
+    check("provider deleted", PROVIDER not in page.locator("#providerList .card h3").all_inner_texts())
+    if vault_ok:
+        check("delete also clears the vault copy",
+              "密钥库中的密钥已一并移除" in t, f"{t[:80]!r}")
+        check("vault no longer lists the provider",
+              PROVIDER not in vault_ids(page), f"{vault_ids(page)}")
 
     check("no uncaught JS errors", not js_errors, f"{js_errors[:2]}")
 

@@ -39,7 +39,49 @@ async function api(path, { method = 'GET', body } = {}) {
 /* ----------------------------------------------------------------- alerts --- */
 
 let alertTimer = null;
+let noticeTimer = null;
+
+/**
+ * The overlay currently covering the page, if any.
+ *
+ * Both dialogs are fixed overlays at z-index 50, so they hide the page-level
+ * #alert completely. Anything raised while one is open must render inside it.
+ */
+function openOverlay() {
+  const editor = $('modal');
+  if (editor && !editor.classList.contains('hidden')) return 'modal';
+  const login = $('loginModal');
+  if (login && !login.classList.contains('hidden')) return 'loginModal';
+  return null;
+}
+
+function showNotice(box, message, kind = 'error', actions = []) {
+  const parts = [el('div', { text: message })];
+  if (actions.length) parts.push(el('div', { class: 'notice-actions' }, actions));
+  box.replaceChildren(...parts);
+  box.className = `notice ${kind}`;
+  // Dialog bodies scroll, and discovery can fail while the user is looking at
+  // the model list further down, so pull the notice into view.
+  box.scrollIntoView({ block: 'nearest' });
+  clearTimeout(noticeTimer);
+  if (kind === 'ok') noticeTimer = setTimeout(() => box.classList.add('hidden'), 4000);
+}
+
+/** Feedback for an action taken inside the editor dialog. */
+function showModalNotice(message, kind = 'error', actions = []) {
+  showNotice($('modalNotice'), message, kind, actions);
+}
+
+function clearModalNotice() {
+  clearTimeout(noticeTimer);
+  for (const id of ['modalNotice', 'loginNotice']) $(id)?.classList.add('hidden');
+}
+
 function showAlert(message, kind = 'error') {
+  // A dialog covers the page-level alert, so anything raised while one is open
+  // would be invisible there — route it into that dialog instead.
+  const overlay = openOverlay();
+  if (overlay) return showNotice($(overlay === 'modal' ? 'modalNotice' : 'loginNotice'), message, kind);
   const box = $('alert');
   box.textContent = message;
   box.className = `alert ${kind}`;
@@ -51,6 +93,7 @@ function clearAlert() { $('alert').classList.add('hidden'); }
 /* ------------------------------------------------------------------ login --- */
 
 function showLogin() {
+  clearModalNotice(); // a stale failure from a previous attempt is misleading
   $('loginModal').classList.remove('hidden');
   $('fLoginToken')?.focus();
 }
@@ -217,6 +260,7 @@ function resetModal() {
   $('fRememberKey').checked = false;
   $('keyHint').textContent = '';
   $('discoverHint').textContent = '';
+  clearModalNotice();
   renderVault();
   renderModels();
 }
@@ -259,6 +303,25 @@ function renderVault() {
   } else {
     hint.textContent = '启用后，本工具会用它请求上游以刷新模型列表；密钥经 AES-256-GCM 加密存盘，接口只写不读。';
   }
+}
+
+/**
+ * Set the user up to enroll the current provider's key in the vault.
+ *
+ * The key itself cannot be filled in for them: the manager deliberately does
+ * not mount openclaw.json, so the plaintext exists only in the config (out of
+ * reach) or with the user. Everything else is one click — tick the box and put
+ * the caret in the field — so what remains is paste, then save.
+ */
+function startVaultEnroll() {
+  const opt = $('fRememberKey');
+  if (opt.disabled) return; // add mode (no id yet) or vault unavailable
+  renderVault();
+  opt.checked = true; // renderVault paints the STORED state, so tick after it
+  $('vaultHint').textContent = '已勾选。粘贴该 Provider 的 API Key 后点「保存到 OpenClaw」，密钥将以 AES-256-GCM 加密存盘。';
+  $('fApiKey').focus();
+  $('fApiKey').scrollIntoView({ block: 'center' });
+  showModalNotice('已勾选「加密保存此密钥」：把 API Key 粘贴到上方输入框，再点「保存到 OpenClaw」。', 'warn');
 }
 
 function openModal(provider = null) {
@@ -338,6 +401,7 @@ async function discover() {
 
   const btn = $('btnDiscover');
   btn.disabled = true;
+  clearModalNotice();
   $('discoverHint').textContent = '正在请求上游…';
   try {
     const r = await api('/api/discover', {
@@ -367,14 +431,32 @@ async function discover() {
     $('discoverHint').textContent = `找到 ${r.count} 个模型${note}`;
   } catch (err) {
     $('discoverHint').textContent = '';
-    // A 401/403 for a SAVED provider is the expected outcome when the stored
-    // key is redacted and no vault copy exists — say what to do about it
-    // rather than only echoing the upstream error.
-    const authish = /401|403/.test(err.message);
-    const tip = authish && state.editingId && !state.vaultIds.has(state.editingId)
-      ? '\n\n提示：OpenClaw 对已存密钥脱敏，本工具无法用它请求上游。勾选下方「加密保存此密钥」并保存，之后即可直接刷新模型。'
-      : '';
-    showAlert(`获取模型失败：${err.message}${tip}`);
+    // A 401/403 for a SAVED provider
+    // whose key is redacted is the one failure the user can repair from here —
+    // and they cannot repair it while staring at the upstream's "invalid key"
+    // message, which describes a request we never sent a key with. So show the
+    // explanation AND the fix, rather than only echoing the upstream error.
+    const fixable = /401|403/.test(err.message)
+      && state.editingId
+      && state.vaultEnabled
+      && !state.vaultIds.has(state.editingId);
+    if (fixable) {
+      showModalNotice(
+        `获取模型失败：${err.message}\n\n`
+        + 'OpenClaw 对已存密钥脱敏，本工具读不到它，因此无法用它请求上游'
+        + '（上面的报错来自一个未携带密钥的请求，并非密钥本身失效）。\n\n'
+        + '把该 Provider 的 API Key 加密存入本工具密钥库后，「刷新模型」即可直接工作。',
+        'warn',
+        [el('button', {
+          class: 'btn small primary',
+          type: 'button',
+          text: '加密保存此密钥',
+          onclick: startVaultEnroll,
+        })],
+      );
+      return;
+    }
+    showAlert(`获取模型失败：${err.message}`);
   } finally {
     btn.disabled = false;
   }
@@ -442,10 +524,20 @@ async function save() {
 }
 
 async function removeProvider(p) {
-  if (!confirm(`确定删除 Provider「${p.id}」吗？\n\n这只会移除 OpenClaw 里的该 provider 配置，不会影响上游服务。`)) return;
+  // Say up front that the vault copy goes too, so removing it is never a
+  // silent side effect.
+  const vaultWarn = state.vaultIds.has(p.id)
+    ? '\n\n该 Provider 的密钥也保存在本工具密钥库中，将一并移除。'
+    : '';
+  if (!confirm(`确定删除 Provider「${p.id}」吗？\n\n这只会移除 OpenClaw 里的该 provider 配置，不会影响上游服务。${vaultWarn}`)) return;
   try {
-    await api(`/api/providers/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
-    showAlert(`已删除 Provider「${p.id}」。`, 'ok');
+    const r = await api(`/api/providers/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+    const vaultNote = r.vaultRemoved
+      ? '；密钥库中的密钥已一并移除'
+      : r.vaultError
+        ? `；但密钥库清理失败：${r.vaultError}`
+        : '';
+    showAlert(`已删除 Provider「${p.id}」${vaultNote}。`, 'ok');
     await refresh();
   } catch (err) {
     showAlert(`删除失败：${err.message}`);

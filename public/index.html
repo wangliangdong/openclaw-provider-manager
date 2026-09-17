@@ -30,6 +30,8 @@
   <div class="modal-card" style="max-width:400px">
     <div class="modal-head"><h2>需要管理令牌</h2></div>
     <div class="modal-body">
+      <!-- Login failures must render here: this overlay covers #alert. -->
+      <div id="loginNotice" class="notice hidden"></div>
       <label class="field">
         <span>PM_ADMIN_TOKEN</span>
         <input id="fLoginToken" type="password" placeholder="管理令牌" autocomplete="off">
@@ -51,6 +53,11 @@
     </div>
 
     <div class="modal-body">
+      <!-- Feedback for actions taken while this dialog is open. The page-level
+           #alert sits in normal flow under <main>, so this fixed overlay covers
+           it entirely; anything raised here must render inside the dialog. -->
+      <div id="modalNotice" class="notice hidden"></div>
+
       <label class="field">
         <span>Provider ID <em>必填，小写字母开头</em></span>
         <input id="fId" placeholder="example" autocomplete="off" spellcheck="false">

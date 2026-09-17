@@ -387,8 +387,31 @@ async function handleApi(req, res, urlPath) {
 
     const patch = buildProviderDeletePatch(id);
     const applied = await applyPatch(patch);
+
+    // Drop the vault copy as well. Once the provider is gone from config the
+    // manager has no use for it (discovery is keyed by provider id), so a
+    // surviving entry is dead weight that otherwise piles up unnoticed —
+    // exactly how a stale key came to sit in the vault here. Reported, not
+    // assumed: a vault failure must not invalidate the config delete that
+    // already succeeded.
+    let vaultRemoved = false;
+    let vaultError = null;
+    if (keystore.enabled) {
+      try {
+        vaultRemoved = await keystore.delete(id);
+      } catch (err) {
+        vaultError = err.message;
+      }
+    }
+
     const { providers } = await fetchProviders();
-    return sendJson(res, 200, { ok: true, noop: applied.result?.noop === true, providers });
+    return sendJson(res, 200, {
+      ok: true,
+      noop: applied.result?.noop === true,
+      providers,
+      vaultRemoved,
+      vaultError,
+    });
   }
 
   /**

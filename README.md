@@ -301,7 +301,7 @@ python3 scripts/import_keys.py --url http://<manager-ip>:8891 example localbox #
 | GET | `/api/status` | Gateway 连通性与延迟 |
 | GET | `/api/providers` | 列出 provider（密钥脱敏） |
 | POST | `/api/providers` | 新增/更新（`id, baseUrl, api, apiKey?, models[]`） |
-| DELETE | `/api/providers/:id` | 删除（不存在返回 404） |
+| DELETE | `/api/providers/:id` | 删除（不存在返回 404）；**同时清掉密钥库中该 provider 的密钥**，响应带 `vaultRemoved` / `vaultError` |
 | POST | `/api/discover` | 上游模型发现（`baseUrl, api, apiKey?, providerId?`）；密钥按 `provided → 配置 → 密钥库` 回退 |
 | POST | `/api/test` | 连接测试（见第 4 节） |
 | GET | `/api/vault` | 密钥库元数据（仅 id/时间戳，**不含密钥**） |
@@ -309,6 +309,8 @@ python3 scripts/import_keys.py --url http://<manager-ip>:8891 example localbox #
 | DELETE | `/api/vault/:id` | 移除该 provider 的密钥（不存在返回 404） |
 
 `apiKey` 留空 = **保留已存密钥**（patch 中不包含该字段）。
+
+**删除 provider 会一并清理密钥库。** provider 从配置消失后，发现流程再也不会用到那份密钥（它按 provider id 索引），留存只是无人察觉的死重量。密钥库不可用或清理失败不影响配置删除本身，失败原因经 `vaultError` 单独上报。
 
 **密钥解析优先级**（`/api/discover`、`/api/test` 一致）：本次输入 > `config.get` 明文（今日不可达，但保留以应对网关未来不再脱敏） > 密钥库。返回的 `keySource`/`keyState` 即使**失败也会带上**，因为「密钥库里的密钥被拒」（需重存）与「压根没有密钥」（需启用密钥库）需要相反的处置。
 
@@ -335,12 +337,14 @@ node --test test/*.test.js     # 或 npm test
 pip install playwright && playwright install chromium
 
 python3 scripts/check_ui.py   http://127.0.0.1:8891   # 渲染 + JS 异常
-python3 scripts/check_flow.py http://127.0.0.1:8891   # 交互流程 30 项
+python3 scripts/check_flow.py http://127.0.0.1:8891   # 交互流程 41 项
 ```
 
 **为什么必须跑**：曾经只靠 curl 打 API 验证，结果一个前端变量遮蔽 bug（`setGwStatus` 内 `const el = …` 遮蔽了全局 `el()` 辅助函数）导致页面渲染空白、列表永远为空，而**所有 API 层检查全部通过**。前端代码只能放在真浏览器里验。
 
-`check_flow.py` 会启一个**要求鉴权的** mock 上游（缺少 `Authorization: Bearer` 则返回 401），覆盖：新增 → 发现（成功 + 失败）→ 手动加模型 → 保存 → 编辑回填 → **测试连接（密钥被脱敏 → warn、手输密钥 → ok）** → **密钥库（勾选保存 → 刷新模型不再重输密钥 → 测试连接走密钥库 → 移除后回退）** → 删除，并断言 JS 零未捕获异常。
+`check_flow.py` 会启一个**要求鉴权的** mock 上游（缺少 `Authorization: Bearer` 则返回 401），覆盖：新增 → 发现（成功 + 失败）→ 手动加模型 → 保存 → 编辑回填 → **测试连接（密钥被脱敏 → warn、手输密钥 → ok）** → **密钥库（勾选保存 → 刷新模型不再重输密钥 → 测试连接走密钥库 → 移除后回退 → 删除时一并清理）** → 删除，并断言 JS 零未捕获异常。
+
+其中一组用例专门锁定**「脱敏密钥导致刷新 401」的可修复性**：上游那句「API Key 无效」描述的是一个**根本没带密钥**的请求，因此不得原样回显成「密钥被拒」；界面必须说明这是脱敏所致，并给出**一键修复**按钮。这些提示渲染在**弹窗内部**——两个弹窗都是 `z-index:50` 的覆盖层，会把页面级的 `#alert` 完全盖住，在弹窗打开时抛出的任何消息（校验失败、保存失败、发现失败）都必须渲染在弹窗里才看得见。
 
 > 密钥库那组用例在服务未配置 `PM_VAULT_KEY` 时会明确报失败，而不是静默跳过——以免「测试全绿」掩盖一个未启用的特性。
 
